@@ -145,4 +145,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - References:
     - A Survey of CNN-Based Network Intrusion Detection
     - TL-CNN-IDS: Transfer Learning-Based Intrusion Detection System Using CNN
-    - Towards an Efficient Model for Network Intrusion Detection System (IDS) 
+    - Towards an Efficient Model for Network Intrusion Detection System (IDS)
