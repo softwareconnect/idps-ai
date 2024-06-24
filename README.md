@@ -14,6 +14,7 @@ This repository provides a comprehensive framework for designing, implementing, 
   - [Evaluation and Testing](#evaluation-and-testing)
   - [Deployment and Maintenance](#deployment-and-maintenance)
   - [Visualization and Reporting](#visualization-and-reporting)
+- [Example Framework for IDS](#example-framework-for-ids)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
@@ -67,6 +68,38 @@ In the era of increasing cyber threats, robust Intrusion Detection Systems (IDS)
 
 - **Tools**: Grafana, Kibana for real-time monitoring and reporting.
 
+## Example Framework for IDS
+
+Below is a high-level framework for designing and implementing an IDS using CNNs:
+
+### 1. Data Collection and Preprocessing
+- **Use tools like Wireshark for capturing network traffic.**
+- **Preprocess data using Python libraries such as Pandas to clean and normalize the dataset.**
+
+### 2. Feature Extraction and Selection
+- **Extract features using domain knowledge and statistical methods.**
+- **Apply feature selection techniques to reduce dimensionality and enhance model performance.**
+
+### 3. Model Design and Training
+- **Design CNN architectures tailored to the nature of network traffic data (Conv1D for sequence data).**
+- **Train the model using labeled datasets like NSL-KDD.**
+
+### 4. Detection Mechanism
+- **Deploy the trained model to detect anomalies in real-time network traffic.**
+- **Implement a hybrid detection mechanism combining signature-based and anomaly-based methods.**
+
+### 5. Evaluation
+- **Evaluate the model using metrics like accuracy, precision, recall, and F1-score.**
+- **Compare performance against benchmark datasets.**
+
+### 6. Deployment
+- **Deploy the IDS in a production environment using Docker for containerization.**
+- **Use Kubernetes for scaling and managing the deployment.**
+
+### 7. Monitoring and Reporting
+- **Integrate with monitoring tools like Grafana for visualizing real-time data.**
+- **Generate periodic reports for analysis and compliance.**
+
 ## Getting Started
 
 ### Prerequisites
@@ -79,6 +112,37 @@ In the era of increasing cyber threats, robust Intrusion Detection Systems (IDS)
 ### Installation
 
 1. Clone the repository:
-   ```sh
-   git clone https://github.com/softwareconnect/idps-ai
-   cd idps-ai
+   ```sh git clone https://github.com/softwareconnect/idps-ai```
+   ```cd idps-ai```
+
+2. Install required packages:
+    ```pip install -r requirements.txt```
+
+### Usage
+1. Data Preprocessing:
+- Use the provided scripts in the preprocessing directory to clean and transform your data.
+
+2. Model Training:
+- Train your CNN model using the scripts in the training directory.
+
+3. Deployment:
+- Deploy the trained model using Docker.
+    ```docker build -t ids-framework .```
+    ```docker run -p 5000:5000 ids-framework```
+
+4. Monitoring and Reporting:
+- Set up Grafana/Kibana for real-time monitoring.
+```# Instructions to set up Grafana/Kibana```
+
+## Contributing
+We welcome contributions from the community. Please read our contributing guidelines for more details.
+
+## License
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+- Special thanks to Lect. Dr. Ing. Cristina Stolojescu for mentoring and support.
+- References:
+    - A Survey of CNN-Based Network Intrusion Detection
+    - TL-CNN-IDS: Transfer Learning-Based Intrusion Detection System Using CNN
+    - Towards an Efficient Model for Network Intrusion Detection System (IDS)
