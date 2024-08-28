@@ -9,14 +9,27 @@ from sklearn.model_selection import train_test_split
 
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Input, Dropout
-from tensorflow.keras.metrics import Precision, Recall
+from tensorflow.keras.layers import Conv1D, BatchNormalization, ReLU, MaxPooling1D, Flatten, Dense, Input, Dropout
+from tensorflow.keras.optimizers import Adam
 from sklearn.metrics import precision_score, recall_score, f1_score
 from early_stopping import MultiMetricEarlyStopping
 
+class CustomTrainingCallback(tf.keras.callbacks.Callback):
+        def __init__(self, index):
+            self.run_index = index
+        
+        def on_epoch_end(self, epoch, logs=None):
+            print(f"[{self.run_index}] Epoch {epoch+1}: Loss: {logs['loss']:.4f}, Accuracy: {logs['accuracy']:.4f}, Val_Loss: {logs.get('val_loss', 'N/A'):.4f}, Val_Accuracy: {logs.get('val_accuracy', 'N/A'):.4f}")
+
+        def on_batch_end(self, batch, logs=None):
+            print(f"[{self.run_index}] Batch {batch+1}: Loss: {logs['loss']:.4f}, Accuracy: {logs['accuracy']:.4f}")
+
 class NAS:
+    
     def __init__(self, run_index):
         self.run_index = run_index
+        self.strategy = tf.distribute.MirroredStrategy()
+        self.lock = threading.Lock()
         self.log = open("cnn_model_data_generator_" + str(self.run_index) + ".txt", 'w')
         # Check if TensorFlow is using the GPU
         self.logMessage(f"Num GPUs Available: {len(tf.config.list_physical_devices('GPU'))}")
@@ -69,6 +82,8 @@ class NAS:
         # Define the 1D CNN model
         self.input_shape = (self.X_train.shape[1], 1)
 
+        self.learning_rate = 0.001
+        self.dropout_rate = 0.0
         self.epochs = 50
         self.batch_size = 1024
         self.conv_activation_fn = 'relu'
@@ -95,108 +110,116 @@ class NAS:
             self.log.close()
     
     def run_nas(self, start_filters, start_layers, dropout_rate):
-        count = 0
-        done = self.max_conv_layers * self.max_dense_layers * self.max_kernel_size * self.max_pool_size
-        for conv_layers in self.convolution_layers:
-            for kernel_size in self.kernel_sizes:
-                for pool_size in self.pool_sizes:
-                    for dense_layers in self.fullconn_layers:
-                        count = count + 1
-                        history = []
-                        filters = []
-                        layers = []
-                        try:
-                            self.logMessage(f"Progress: [{str(count)}/{str(done)}] {str((count / done) * 100)}%")
-                            self.logMessage(f"conv_layers: {str(conv_layers)} {str(kernel_size)} {str(kernel_size)} "
-                                + f"pool_size: {str(pool_size)} {str(dense_layers)}: {str(dense_layers)}")
-                            model = Sequential()
-                            model.add(Input(shape=self.input_shape))
-                            filters = self.increasing_filters_layers(conv_layers, start_filters)
-                            self.logMessage(f"filters: {str(filters)}")
-                            for filter_size in filters:
-                                model.add(Conv1D(filters=filter_size,
-                                                kernel_size=kernel_size,
-                                                activation=self.conv_activation_fn))
-                                self.logMessage(f"Output shape Conv1D: {str(model.output_shape)}")
-                                model.add(MaxPooling1D(pool_size=pool_size))
-                                self.logMessage(f"Output shape MaxPooling1D: {str(model.output_shape)}")
-                                model.add(Dropout(dropout_rate))
+        with self.strategy.scope():
+            count = 0
+            done = self.max_conv_layers * self.max_dense_layers * self.max_kernel_size * self.max_pool_size
+            for conv_layers in self.convolution_layers:
+                for kernel_size in self.kernel_sizes:
+                    for pool_size in self.pool_sizes:
+                        for dense_layers in self.fullconn_layers:
+                            count = count + 1
+                            history = []
+                            filters = []
+                            layers = []
+                            try:
+                                self.logMessage(f"Progress: [{str(count)}/{str(done)}] {str((count / done) * 100)}%")
+                                self.logMessage(f"conv_layers: {str(conv_layers)} kernel_size: {str(kernel_size)} "
+                                    + f"pool_size: {str(pool_size)} dense_layers: {str(dense_layers)}")
+                                model = Sequential()
+                                model.add(Input(shape=self.input_shape))
+                                filters = self.increasing_filters_layers(conv_layers, start_filters)
+                                self.logMessage(f"filters: {str(filters)}")
+                                for filter_size in filters:
+                                    # Add a convolutional layer
+                                    model.add(Conv1D(filters=filter_size,
+                                                    kernel_size=kernel_size,
+                                                    activation=self.conv_activation_fn))
+                                    self.logMessage(f"Output shape Conv1D: {str(model.output_shape)}")
+                                    # Add batch normalization
+                                    model.add(BatchNormalization())
+                                    # Add ReLU activation
+                                    model.add(ReLU())
 
-                            model.add(Flatten())
-                            self.logMessage(f"Output shape Flatten: {str(model.output_shape)}")
-                            model.add(Dropout(dropout_rate))
-                            self.logMessage(f"Output shape Dropout: {str(model.output_shape)}")
+                                    model.add(MaxPooling1D(pool_size=pool_size))
+                                    self.logMessage(f"Output shape MaxPooling1D: {str(model.output_shape)}")
+                                    model.add(Dropout(dropout_rate))
 
-                            layers = list(reversed(self.increasing_filters_layers(conv_layers, start_layers)))
-                            self.logMessage(f"dense layers: {str(layers)}")
-                            for dense_layer in layers:
-                                # Fully connected layer with x neurons
-                                model.add(Dense(dense_layer, activation=self.fullconn_activation_fn))
-                                self.logMessage(f"Output shape Dense: {str(model.output_shape)}")
+                                model.add(Flatten())
+                                self.logMessage(f"Output shape Flatten: {str(model.output_shape)}")
                                 model.add(Dropout(dropout_rate))
                                 self.logMessage(f"Output shape Dropout: {str(model.output_shape)}")
 
-                            # Output layer with softmax activation for multi-class classification
-                            model.add(Dense(len(self.label_encoder.classes_), activation=self.out_activation_fn))
-                            self.logMessage(f"Final output shape Dense: {str(model.output_shape)}")
+                                layers = list(reversed(self.increasing_filters_layers(conv_layers, start_layers)))
+                                self.logMessage(f"dense layers: {str(layers)}")
+                                for dense_layer in layers:
+                                    # Fully connected layer with x neurons
+                                    model.add(Dense(dense_layer, activation=self.fullconn_activation_fn))
+                                    self.logMessage(f"Output shape Dense: {str(model.output_shape)}")
+                                    model.add(Dropout(dropout_rate))
+                                    self.logMessage(f"Output shape Dropout: {str(model.output_shape)}")
 
-                            # Compile the model
-                            model.compile(optimizer='adam',
-                                        loss='sparse_categorical_crossentropy',
-                                        metrics=['accuracy'])
+                                # Output layer with softmax activation for multi-class classification
+                                model.add(Dense(len(self.label_encoder.classes_), activation=self.out_activation_fn))
+                                self.logMessage(f"Final output shape Dense: {str(model.output_shape)}")
 
-                            # Train the model
-                            # early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
-                            # multi_metric_early_stopping = MultiMetricEarlyStopping(val_loss_patience=10, val_accuracy_patience=10)
-                            start_time = time.time()
-                            history = model.fit(self.X_train, self.y_train,
-                                                epochs=self.epochs,
-                                                validation_data=(self.X_val, self.y_val),
-                                                batch_size = self.batch_size
-                                                # callbacks=[multi_metric_early_stopping]
-                            )
-                            end_time = time.time()
-                            # Calculate the elapsed time
-                            elapsed_time = end_time - start_time
-                            # Print the elapsed time in seconds
-                            self.logMessage(f"Operation took {elapsed_time:.4f} seconds")
-                            # Print the batch size used
-                            # print(f"Batch size used: {model.batch_size}")
-                            
-                            # Evaluate the model
-                            validation_loss, validation_accuracy = model.evaluate(self.X_val, self.y_val)
-                            self.logMessage(f"History: {str(history.history.keys())}")
-                            # Calculate precision, recall, and F1 score
-                            y_pred = model.predict(self.X_val)
-                            y_pred_classes = np.argmax(y_pred, axis=1)
-                            precision = precision_score(self.y_val, y_pred_classes, average='weighted')
-                            recall = recall_score(self.y_val, y_pred_classes, average='weighted')
-                            f1 = f1_score(self.y_val, y_pred_classes, average='weighted')
+                                # Train the model
+                                # early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+                                # multi_metric_early_stopping = MultiMetricEarlyStopping(val_loss_patience=10, val_accuracy_patience=10)
+                                with self.lock:
+                                    # Compile the model
+                                    optimizer = Adam(learning_rate=self.learning_rate)
+                                    model.compile(optimizer=optimizer,
+                                                loss='sparse_categorical_crossentropy',
+                                                metrics=['accuracy'])
+                                
+                                    start_time = time.time()
+                                    history = model.fit(self.X_train, self.y_train,
+                                                        epochs=self.epochs,
+                                                        validation_data=(self.X_val, self.y_val),
+                                                        batch_size = self.batch_size,
+                                                        callbacks=[CustomTrainingCallback(self.run_index)]
+                                                        # callbacks=[multi_metric_early_stopping]
+                                    )
+                                    end_time = time.time()
+                                    # Calculate the elapsed time
+                                    elapsed_time = end_time - start_time
+                                    # Print the elapsed time in seconds
+                                    self.logMessage(f"Operation took {elapsed_time:.4f} seconds", False)
+                                    # Print the batch size used
+                                    # print(f"Batch size used: {model.batch_size}")
+                                    
+                                    # Evaluate the model
+                                    validation_loss, validation_accuracy = model.evaluate(self.X_val, self.y_val)
+                                    self.logMessage(f"History: {str(history.history.keys())}", False)
+                                    # Calculate precision, recall, and F1 score
+                                    y_pred = model.predict(self.X_val)
+                                    y_pred_classes = np.argmax(y_pred, axis=1)
+                                    precision = precision_score(self.y_val, y_pred_classes, average='weighted', zero_division=0)
+                                    recall = recall_score(self.y_val, y_pred_classes, average='weighted', zero_division=0)
+                                    f1 = f1_score(self.y_val, y_pred_classes, average='weighted')
 
-                            # Log precision, recall, and F1 score
-                            self.logMessage(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+                                    # Log precision, recall, and F1 score
+                                    self.logMessage(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}", False)
 
-                            # Get the number of epochs that were actually executed
-                            epochs_executed = len(history.history['loss'])
+                                    # Get the number of epochs that were actually executed
+                                    epochs_executed = len(history.history['loss'])
 
-                            early_stopped = 0 # 1 if multi_metric_early_stopping.early_stopped else 0
-                            self.log_to_dataset(history, conv_layers, kernel_size, pool_size, dense_layers, filters, layers,
-                                        validation_accuracy, validation_loss, precision, recall, f1,
-                                        early_stopped, self.epochs, epochs_executed, 1, int(elapsed_time))
+                                    early_stopped = 0 # 1 if multi_metric_early_stopping.early_stopped else 0
+                                    self.log_to_dataset(history, conv_layers, kernel_size, pool_size, dense_layers, filters, layers,
+                                                validation_accuracy, validation_loss, precision, recall, f1,
+                                                early_stopped, self.epochs, epochs_executed, self.batch_size, 1, int(elapsed_time))
 
-                        except Exception as e:
-                            self.logMessage(f"An error occurred: {e}")
-                            self.log_to_dataset(history, conv_layers, kernel_size, pool_size, dense_layers, filters, layers,
-                                        0, 0, 0, 0, 0,
-                                        0, self.epochs, 0, 0, 0)
-                            try:
-                                self.logMessage(f"An error occurred: {e}")
                             except Exception as e:
-                                print(f"An error occurred: {e}")
+                                self.logMessage(f"An error occurred: {e}")
+                                self.log_to_dataset(history, conv_layers, kernel_size, pool_size, dense_layers, filters, layers,
+                                            0, 0, 0, 0, 0,
+                                            0, self.epochs, 0, 0, 0, 0)
+                                self.logMessage(f"An error occurred: {e}")
+                            
 
     def log_to_dataset(self, history, conv_layers, kernel_size, pool_size, dense_layers, filters, neurons,
                 eval_accuracy, eval_loss, precision, recall, f1,
-                early_stopped, epochs_max, epochs_executed, cnn_config_possible, execution_time):
+                early_stopped, epochs_max, epochs_executed, batch_size, cnn_config_possible, execution_time, err=""):
         '''After training, extract the relevant data'''
         
         # FEATURES
@@ -217,9 +240,12 @@ class NAS:
             'dense_neurons_5': neurons[4] if len(neurons) >= 5 else 0,
             'epochs_max': epochs_max,
             'epochs_executed': epochs_executed,
+            'batch_size': batch_size,
+            'learning_rate': self.learning_rate,
+            'dropout_rate': self.dropout_rate,
             'early_stopped': early_stopped,
             'cnn_config_possible': cnn_config_possible,
-            'execution_time': execution_time
+            'execution_time': execution_time,
         }
 
         # TARGETS
@@ -228,7 +254,7 @@ class NAS:
             experiment_data['val_accuracy_max'] = max(history.history['val_accuracy']) if len(history.history['val_accuracy']) >= 1 else 0
             experiment_data['train_loss_max'] = max(history.history['loss']) if len(history.history['loss']) >= 1 else 0
             experiment_data['val_loss_max'] = max(history.history['val_loss']) if len(history.history['val_loss']) >= 1 else 0
-            experiment_data['train_accuracy_last'] = history.history['val_loss'][-1] if len(history.history['val_loss']) >= 1 else 0
+            experiment_data['train_accuracy_last'] = history.history['accuracy'][-1] if len(history.history['accuracy']) >= 1 else 0
             experiment_data['val_accuracy_last'] = history.history['val_accuracy'][-1] if len(history.history['val_accuracy']) >= 1 else 0
             experiment_data['train_loss_last'] = history.history['loss'][-1] if len(history.history['loss']) >= 1 else 0
             experiment_data['val_loss_last'] = history.history['val_loss'][-1] if len(history.history['val_loss']) >= 1 else 0
@@ -267,9 +293,12 @@ class NAS:
                 experiment_data[f'hist_loss_{index}'] = loss
             for index, val_loss in enumerate(history.history['val_loss']):
                 experiment_data[f'hist_val_loss_{index}'] = val_loss
+        
+        if err != "":
+            experiment_data['err'] = err
 
         # Define CSV file and headers
-        csv_file = 'model_experiments_' + str(self.run_index) + '.csv'
+        csv_file = 'meta_data_' + str(self.run_index) + '.csv'
         headers = list(experiment_data.keys())
 
         # Write or append to dataset CSV file
@@ -329,24 +358,33 @@ class NAS:
                 units = max(units // decrease_factor, 1)  # Ensure units don't go below 1
         return layers
     
-    def logMessage(self, message):
-        print(f"[{str(self.run_index)}] {message}")
-        self.log.write(f"[{str(self.run_index)}] {message}\n")
-        self.log.flush()
+    def logMessage(self, message, lock = True):
+        if lock:
+            with self.lock:
+                print(f"[{str(self.run_index)}] {message}")
+                self.log.write(f"[{str(self.run_index)}] {message}\n")
+                self.log.flush()
+        else:
+            print(f"[{str(self.run_index)}] {message}")
+            self.log.write(f"[{str(self.run_index)}] {message}\n")
+            self.log.flush()
                     
 if __name__ == "__main__":
+    # Model Architectures
     start_filters = [1, 2, 4, 8, 16, 32, 64, 128]
     start_layers = [16, 32, 64, 128, 256, 512, 1024, 2048]
-    dropout_rates = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
-    batch_sizes = [32, 64, 128, 512, 1024, 2048]
+    # Hyperparameters
+    batch_sizes = [32, 64, 128, 512, 1024]
+    dropout_rates = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+    learning_rates = [0.001, 0.01, 0.0001]  # NAS Stage I
 
     #nas = NAS(0)
     #nas.run_nas(start_filters[0], start_layers[0], dropout_rates[0])
 
     threads = []
-    for index in range(0, 8):  # Adjust the range as needed
+    for index in range(0, 2):  # Adjust the range as needed
         nas = NAS(index)
-        t = threading.Thread(target=nas.run_nas, args=(start_filters[index], start_layers[index], dropout_rates[1]))
+        t = threading.Thread(target=nas.run_nas, args=(start_filters[index], start_layers[0], dropout_rates[0]))
         t.start()
         threads.append(t)
 
